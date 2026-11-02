@@ -7,6 +7,8 @@ set -euo pipefail
 
 ROLE_NAME="${ROLE_NAME:-IaC-Terraform-GitHubActions}"
 GITHUB_REPO="${GITHUB_REPO:-LauraGabrielSantes/IaC-Terraform}"
+GITHUB_OWNER="${GITHUB_REPO%%/*}"
+GITHUB_REPO_NAME="${GITHUB_REPO##*/}"
 ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
 OIDC_PROVIDER_ARN="arn:aws:iam::${ACCOUNT_ID}:oidc-provider/token.actions.githubusercontent.com"
 
@@ -39,7 +41,9 @@ cat > "$TRUST_POLICY" <<JSON
         "StringLike": {
           "token.actions.githubusercontent.com:sub": [
             "repo:${GITHUB_REPO}:ref:refs/heads/main",
-            "repo:${GITHUB_REPO}:pull_request"
+            "repo:${GITHUB_REPO}:pull_request",
+            "repo:${GITHUB_OWNER}@*/${GITHUB_REPO_NAME}@*:ref:refs/heads/main",
+            "repo:${GITHUB_OWNER}@*/${GITHUB_REPO_NAME}@*:pull_request"
           ]
         }
       }

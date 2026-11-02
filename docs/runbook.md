@@ -88,3 +88,7 @@ aws s3 ls "s3://iac-terraform-tfstate-<cuenta>-us-east-1"
 | `ALARM_ACTIVE` | La alarma de 5xx se activó | Revisar logs y desplegar una versión sana. |
 | Queda un ASG `CodeDeploy_*` | Resto de una prueba anterior con `COPY_AUTO_SCALING_GROUP` | Eliminarlo manualmente antes del destroy. |
 | `terraform destroy` falla por un ASG no gestionado | Resto de una prueba anterior | Eliminar el ASG `CodeDeploy_*` primero. |
+
+## Validación local
+
+La práctica se validó localmente con despliegue normal y rollback por alarma antes de publicar el repositorio.
