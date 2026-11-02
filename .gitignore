@@ -1,0 +1,14 @@
+.terraform/
+*.tfstate
+*.tfstate.*
+tfplan
+plan.txt
+bundle/
+bundle.zip
+VERSION
+.env
+__pycache__/
+*.pyc
+.DS_Store
+.bluegreen.env
+tfplan*

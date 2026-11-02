@@ -1,0 +1,164 @@
+name: CD Terraform Deploy
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - "backend/**"
+      - "frontend/**"
+      - "scripts/**"
+      - "appspec.yml"
+      - "docker-compose.yml"
+      - ".github/workflows/cd-terraform-deploy.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+
+concurrency:
+  group: cd-terraform-deploy
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS con OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-cd-terraform
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.3
+
+      - name: Calcular bucket de state
+        id: state
+        run: |
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "bucket=iac-terraform-tfstate-${ACCOUNT_ID}-${{ vars.AWS_REGION }}" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform init
+        run: terraform -chdir=infra/main init -backend-config="bucket=${{ steps.state.outputs.bucket }}"
+
+      - name: Comprobar formato
+        run: terraform fmt -check -recursive infra
+
+      - name: Terraform validate
+        run: terraform -chdir=infra/main validate
+
+      - name: Terraform plan
+        run: terraform -chdir=infra/main plan -no-color -out=tfplan
+
+      - name: Terraform apply
+        run: terraform -chdir=infra/main apply -auto-approve tfplan
+
+      - name: Exportar outputs
+        run: |
+          {
+            echo "ALB_DNS=$(terraform -chdir=infra/main output -raw alb_dns_name)"
+            echo "BACKEND_REPO=$(terraform -chdir=infra/main output -raw backend_ecr_repository_url)"
+            echo "FRONTEND_REPO=$(terraform -chdir=infra/main output -raw frontend_ecr_repository_url)"
+            echo "BACKEND_REPO_NAME=$(terraform -chdir=infra/main output -raw backend_ecr_repository_name)"
+            echo "FRONTEND_REPO_NAME=$(terraform -chdir=infra/main output -raw frontend_ecr_repository_name)"
+            echo "ARTIFACTS_BUCKET=$(terraform -chdir=infra/main output -raw artifacts_bucket)"
+            echo "CODEDEPLOY_APP=$(terraform -chdir=infra/main output -raw codedeploy_app_name)"
+            echo "CODEDEPLOY_GROUP=$(terraform -chdir=infra/main output -raw codedeploy_deployment_group_name)"
+          } >> "$GITHUB_ENV"
+
+      - name: ECR login
+        run: |
+          ECR_REGISTRY="${BACKEND_REPO%%/*}"
+          echo "ECR_REGISTRY=$ECR_REGISTRY" >> "$GITHUB_ENV"
+          aws ecr get-login-password --region "${{ vars.AWS_REGION }}" | \
+            docker login --username AWS --password-stdin "$ECR_REGISTRY"
+
+      - name: Build y push backend
+        run: |
+          if aws ecr describe-images --repository-name "$BACKEND_REPO_NAME" \
+            --image-ids imageTag="$GITHUB_SHA" >/dev/null 2>&1; then
+            echo "La imagen backend $GITHUB_SHA ya existe"
+          else
+            docker build -t "$BACKEND_REPO:$GITHUB_SHA" ./backend
+            docker push "$BACKEND_REPO:$GITHUB_SHA"
+          fi
+
+      - name: Build y push frontend
+        run: |
+          if aws ecr describe-images --repository-name "$FRONTEND_REPO_NAME" \
+            --image-ids imageTag="$GITHUB_SHA" >/dev/null 2>&1; then
+            echo "La imagen frontend $GITHUB_SHA ya existe"
+          else
+            docker build -t "$FRONTEND_REPO:$GITHUB_SHA" ./frontend
+            docker push "$FRONTEND_REPO:$GITHUB_SHA"
+          fi
+
+      - name: Empaquetar bundle
+        run: |
+          mkdir -p bundle
+          cp appspec.yml docker-compose.yml bundle/
+          cp -r scripts bundle/scripts
+          echo "$GITHUB_SHA" > bundle/VERSION
+          (cd bundle && zip -qr ../bundle.zip .)
+
+      - name: Subir bundle a S3
+        id: s3
+        run: |
+          aws s3 cp bundle.zip "s3://$ARTIFACTS_BUCKET/releases/$GITHUB_SHA.zip"
+          VERSION_ID="$(aws s3api head-object \
+            --bucket "$ARTIFACTS_BUCKET" \
+            --key "releases/$GITHUB_SHA.zip" \
+            --query 'VersionId' --output text)"
+          if [ -z "$VERSION_ID" ] || [ "$VERSION_ID" = "None" ]; then
+            echo "No se obtuvo VersionId del bundle" >&2
+            exit 1
+          fi
+          echo "version_id=$VERSION_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Preparar Blue/Green
+        run: |
+          ./scripts/prepare_bluegreen.sh
+          cat .bluegreen.env >> "$GITHUB_ENV"
+
+      - name: Crear deployment en CodeDeploy
+        id: deploy
+        run: |
+          DEPLOYMENT_ID="$(aws deploy create-deployment \
+            --application-name "$CODEDEPLOY_APP" \
+            --deployment-group-name "$CODEDEPLOY_GROUP" \
+            --s3-location "bucket=$ARTIFACTS_BUCKET,key=releases/$GITHUB_SHA.zip,bundleType=zip,version=${{ steps.s3.outputs.version_id }}" \
+            --target-instances "autoScalingGroups=$REPLACEMENT_ASG" \
+            --description "Deploy $GITHUB_SHA" \
+            --query 'deploymentId' --output text)"
+          echo "deployment_id=$DEPLOYMENT_ID" >> "$GITHUB_OUTPUT"
+
+      - name: Esperar READY, validar y continuar
+        run: ./scripts/wait_and_continue.sh "${{ steps.deploy.outputs.deployment_id }}" "$ALB_DNS"
+
+      - name: Health check de produccion
+        run: |
+          for _ in $(seq 1 30); do
+            if curl -fsS "http://$ALB_DNS/api/health"; then
+              exit 0
+            fi
+            sleep 10
+          done
+          exit 1
+
+      - name: Resumen
+        if: always()
+        run: |
+          echo "## CD Terraform Deploy" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Commit: $GITHUB_SHA" >> "$GITHUB_STEP_SUMMARY"
+          echo "- ALB: $ALB_DNS" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Deployment: ${{ steps.deploy.outputs.deployment_id }}" >> "$GITHUB_STEP_SUMMARY"

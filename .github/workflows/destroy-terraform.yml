@@ -1,0 +1,66 @@
+name: Destroy Terraform
+
+on:
+  workflow_dispatch:
+    inputs:
+      confirm:
+        description: "Escribe DESTROY para confirmar"
+        required: true
+        type: string
+
+permissions:
+  id-token: write
+  contents: read
+
+jobs:
+  destroy:
+    if: github.event.inputs.confirm == 'DESTROY'
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment: production
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS con OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-destroy-terraform
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.3
+
+      - name: Calcular bucket de state
+        id: state
+        run: |
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "bucket=iac-terraform-tfstate-${ACCOUNT_ID}-${{ vars.AWS_REGION }}" >> "$GITHUB_OUTPUT"
+
+      - name: Terraform init
+        run: terraform -chdir=infra/main init -backend-config="bucket=${{ steps.state.outputs.bucket }}"
+
+      - name: Eliminar ASGs huérfanos de CodeDeploy
+        run: |
+          ASGS="$(aws autoscaling describe-auto-scaling-groups \
+            --query "AutoScalingGroups[?starts_with(AutoScalingGroupName, 'CodeDeploy_')].AutoScalingGroupName" \
+            --output text)"
+          for ASG in $ASGS; do
+            echo "Eliminando ASG huérfano de CodeDeploy: $ASG"
+            aws autoscaling delete-auto-scaling-group \
+              --auto-scaling-group-name "$ASG" --force-delete
+          done
+
+      - name: Terraform destroy
+        run: terraform -chdir=infra/main destroy -auto-approve
+
+      - name: Resumen
+        if: always()
+        run: |
+          echo "## Destroy Terraform" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Bootstrap conservado: si" >> "$GITHUB_STEP_SUMMARY"
+          echo "- Infraestructura principal destruida" >> "$GITHUB_STEP_SUMMARY"

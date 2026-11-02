@@ -1,0 +1,83 @@
+name: CI Terraform
+
+on:
+  pull_request:
+    branches: [main]
+    paths:
+      - "infra/**"
+      - ".github/workflows/ci-terraform.yml"
+  workflow_dispatch:
+
+permissions:
+  id-token: write
+  contents: read
+  pull-requests: write
+
+concurrency:
+  group: ci-terraform-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  plan:
+    if: github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Configurar credenciales AWS con OIDC
+        uses: aws-actions/configure-aws-credentials@v4
+        with:
+          role-to-assume: ${{ vars.AWS_ROLE_ARN }}
+          aws-region: ${{ vars.AWS_REGION }}
+          role-session-name: gha-ci-terraform
+
+      - name: Instalar Terraform
+        uses: hashicorp/setup-terraform@v3
+        with:
+          terraform_version: 1.10.3
+
+      - name: Calcular bucket de state
+        id: state
+        run: |
+          ACCOUNT_ID="$(aws sts get-caller-identity --query Account --output text)"
+          echo "bucket=iac-terraform-tfstate-${ACCOUNT_ID}-${{ vars.AWS_REGION }}" >> "$GITHUB_OUTPUT"
+
+      - name: Init bootstrap
+        run: terraform -chdir=infra/bootstrap init -backend-config="bucket=${{ steps.state.outputs.bucket }}"
+
+      - name: Validate bootstrap
+        run: terraform -chdir=infra/bootstrap validate
+
+      - name: Init main
+        run: terraform -chdir=infra/main init -backend-config="bucket=${{ steps.state.outputs.bucket }}"
+
+      - name: Comprobar formato
+        run: terraform fmt -check -recursive infra
+
+      - name: Validate main
+        run: terraform -chdir=infra/main validate
+
+      - name: Plan
+        run: terraform -chdir=infra/main plan -no-color -out=tfplan
+
+      - name: Mostrar plan
+        run: terraform -chdir=infra/main show -no-color tfplan > plan.txt
+
+      - name: Resumen del plan
+        run: |
+          echo "## Terraform plan" >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+          head -n 120 plan.txt >> "$GITHUB_STEP_SUMMARY"
+          echo '```' >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Subir plan como artefacto
+        uses: actions/upload-artifact@v4
+        with:
+          name: tfplan
+          path: |
+            infra/main/tfplan
+            plan.txt
+          retention-days: 1
