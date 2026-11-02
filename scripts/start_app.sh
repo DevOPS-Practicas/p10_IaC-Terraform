@@ -2,6 +2,8 @@
 set -euo pipefail
 
 APP_DIR="/opt/mi-app"
+mkdir -p /var/log/calculadora
+chmod 777 /var/log/calculadora || true
 cd "$APP_DIR"
 
 TOKEN="$(curl -fsS -X PUT "http://169.254.169.254/latest/api/token" \

@@ -25,6 +25,14 @@ aws deploy get-deployment --deployment-id <id> \
 ALB_DNS="$(terraform -chdir=infra/main output -raw alb_dns_name)"
 curl -i "http://$ALB_DNS/api/health"
 curl -i "http://$ALB_DNS:8080/api/health"
+
+TOKEN="$(curl -sS -X POST "http://$ALB_DNS/api/auth/login" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'username=admin&password=admin123' | jq -r .access_token)"
+curl -i -X POST "http://$ALB_DNS/api/calculadora/sumar" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"a":2,"b":3}' 
 ```
 
 ## Ver alarmas

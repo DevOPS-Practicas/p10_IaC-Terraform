@@ -128,11 +128,19 @@ IaC-Terraform/
 ├── backend/
 │   ├── Dockerfile
 │   ├── main.py
-│   └── requirements.txt
+│   ├── requirements.txt
+│   ├── app/
+│   │   ├── core/
+│   │   ├── routers/
+│   │   ├── schemas/
+│   │   └── services/
+│   └── tests/
 ├── frontend/
 │   ├── Dockerfile
-│   ├── index.html
-│   └── nginx.conf
+│   ├── nginx.conf.template
+│   ├── package.json
+│   ├── public/
+│   └── src/
 ├── infra/
 │   ├── bootstrap/
 │   │   ├── backend.tf
@@ -151,12 +159,16 @@ IaC-Terraform/
 ├── scripts/
 │   ├── after_install.sh
 │   ├── before_install.sh
+│   ├── bootstrap_state.sh
 │   ├── create_oidc_role.sh
 │   ├── deploy_local.sh
 │   ├── generate_5xx.sh
 │   ├── init_backend.sh
+│   ├── prepare_bluegreen.sh
+│   ├── promote_bluegreen.sh
 │   ├── start_app.sh
 │   ├── test_observabilidad.sh
+│   ├── test_rollback.sh
 │   ├── validate_service.sh
 │   └── wait_and_continue.sh
 ├── appspec.yml
@@ -417,28 +429,36 @@ Las instancias del ASG pueden aparecer inicialmente **unhealthy** en el Target G
 
 ### Backend
 
-`backend/main.py` expone:
+`backend/main.py` monta una API FastAPI v6 con `root_path="/api"` y tres grupos de rutas:
 
-- `GET /health`: health check.
-- `POST /calculate`: suma, resta, multiplicación y división.
-- `GET /boom`: devuelve 500 de forma intencional para la prueba de rollback.
+- `GET /health` y `GET /boom`: health check y endpoint de prueba que devuelve 500 para el rollback.
+- `POST /auth/login`: autenticación con JWT. Credenciales de demo: `admin` / `admin123`.
+- `POST /calculadora/sumar`, `/restar`, `/multiplicar`, `/dividir`: operaciones protegidas con `Authorization: Bearer <token>`.
 
-`backend/Dockerfile` usa `python:3.12-slim` y arranca Uvicorn en el puerto 8000.
+La aplicación usa CORS, logging estructurado y separación en capas (`core`, `routers`, `schemas`, `services`). `backend/Dockerfile` usa `python:3.9-alpine`, instala las dependencias y ejecuta Uvicorn en el puerto 8000 con el usuario `appuser`.
 
 ### 8.2. Frontend
 
-`frontend/nginx.conf` escucha en 8080 y proxya `/api/` hacia `backend:8000`. El contenedor publica `3000:8080`, que es el puerto que usa el Target Group.
+El frontend es una aplicación React + TypeScript (Create React App). `frontend/Dockerfile` es multi-stage: compila con `node:18-alpine` y sirve el build con `nginxinc/nginx-unprivileged:1.27-alpine`.
+
+`frontend/nginx.conf.template` escucha en 8080, resuelve `BACKEND_HOST` y `BACKEND_PORT`, y proxya:
+
+- `/api/` hacia el backend.
+- `/health` hacia el backend.
+- El resto hacia `index.html` para el enrutamiento de React.
+
+El contenedor publica `3000:8080`, que es el puerto que usa el Target Group.
 
 ### 8.3. Docker Compose
 
 `docker-compose.yml` usa las imágenes de ECR:
 
 ```yaml
-image: ${ECR_REGISTRY}/mi-app/backend:${APP_VERSION}
-image: ${ECR_REGISTRY}/mi-app/frontend:${APP_VERSION}
+image: ${ECR_REGISTRY}/mi-app/backend:${APP_VERSION:-latest}
+image: ${ECR_REGISTRY}/mi-app/frontend:${APP_VERSION:-latest}
 ```
 
-Ambos servicios escriben en `/var/log/calculadora/calculadora.log` con `tee`. No se publica `latest`: la versión es el SHA del commit.
+El frontend monta `/etc/nginx/conf.d` como `tmpfs` para que el entrypoint renderice la plantilla de nginx. Ambos servicios escriben en `/var/log/calculadora/calculadora.log` con `tee`. No se publica `latest`: la versión es el SHA del commit.
 
 ### 8.4. Hooks de CodeDeploy
 
@@ -564,17 +584,23 @@ ALB_DNS="$(terraform -chdir=infra/main output -raw alb_dns_name)"
 
 curl -i "http://$ALB_DNS/api/health"
 curl -i "http://$ALB_DNS:8080/api/health"
-curl -i -X POST "http://$ALB_DNS/api/calculate" \
+
+TOKEN="$(curl -sS -X POST "http://$ALB_DNS/api/auth/login" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'username=admin&password=admin123' | jq -r .access_token)"
+
+curl -i -X POST "http://$ALB_DNS/api/calculadora/sumar" \
+  -H "Authorization: Bearer $TOKEN" \
   -H 'Content-Type: application/json' \
-  -d '{"a":2,"b":3,"op":"add"}'
+  -d '{"a":2,"b":3}'
 ```
 
 Resultados esperados:
 
 ```text
 HTTP/1.1 200 OK
-{"status":"ok","version":"1.0.0"}
-{"result":5.0}
+{"status":"ok","version":"2.0.0"}
+{"operacion":"suma","a":2.0,"b":3.0,"resultado":5.0}
 ```
 
 ---
@@ -852,7 +878,8 @@ Los comandos deben devolver listas vacías o errores de “no encontrado”.
 | CI | Pull Request | `fmt`, `validate` y `plan` en verde. | Workflow |
 | CD | Push a main | Apply, build, bundle y deployment exitoso. | Workflow |
 | Health | `curl /api/health` | HTTP 200. | Salida de curl |
-| Cálculo | `POST /api/calculate` | Resultado correcto. | Salida de curl |
+| Autenticación | `POST /api/auth/login` con `admin/admin123` | Token JWT válido. | Salida de curl |
+| Cálculo | Login + `POST /api/calculadora/sumar` | `resultado: 5.0`. | Salida de curl |
 | Blue/Green | Despliegue normal | El entorno de reemplazo recibe tráfico y el anterior se conserva. | CodeDeploy |
 | Rollback | `generate_5xx.sh` + deploy | Alarma del TG de reemplazo en ALARM y deployment detenido. | CloudWatch y CodeDeploy |
 | Alarmas | `test_observabilidad.sh` | Ambas alarmas registradas. | Salida del script |
@@ -871,6 +898,7 @@ Los comandos deben devolver listas vacías o errores de “no encontrado”.
 - [ ] El pipeline de CI ejecuta `fmt`, `validate` y `plan`.
 - [ ] El pipeline de CD despliega la aplicación.
 - [ ] `/api/health` responde 200 en producción y en el listener de pruebas.
+- [ ] El login devuelve un token y la suma autenticada devuelve `5.0`.
 - [ ] El despliegue Blue/Green cambia el tráfico y conserva el entorno anterior para inspección.
 - [ ] Las dos alarmas de 5xx están registradas en CodeDeploy.
 - [ ] El rollback por alarma detiene el despliegue y producción sigue sana.

@@ -34,8 +34,8 @@ GitHub Actions --OIDC--> IAM Role
 ```text
 .
 ├── .github/workflows/       CI, CD y destroy
-├── backend/                 FastAPI de la calculadora
-├── frontend/                Nginx + HTML
+├── backend/                 FastAPI + JWT de la calculadora
+├── frontend/                React + Nginx
 ├── infra/bootstrap/         Bucket S3 del state
 ├── infra/main/              Infraestructura principal
 ├── scripts/                 Rol OIDC, despliegue, validación y pruebas
@@ -104,6 +104,15 @@ O hacer push a `main` para que lo haga el workflow `CD Terraform Deploy`.
 ALB_DNS="$(terraform -chdir=infra/main output -raw alb_dns_name)"
 curl -fsS "http://$ALB_DNS/api/health"
 curl -fsS "http://$ALB_DNS:8080/api/health"
+
+TOKEN="$(curl -sS -X POST "http://$ALB_DNS/api/auth/login" \
+  -H 'Content-Type: application/x-www-form-urlencoded' \
+  -d 'username=admin&password=admin123' | jq -r .access_token)"
+curl -fsS -X POST "http://$ALB_DNS/api/calculadora/sumar" \
+  -H "Authorization: Bearer $TOKEN" \
+  -H 'Content-Type: application/json' \
+  -d '{"a":2,"b":3}'
+
 ./scripts/test_observabilidad.sh
 ```
 
@@ -172,6 +181,12 @@ gh workflow run destroy-terraform.yml --repo LauraGabrielSantes/IaC-Terraform --
 terraform -chdir=infra/main validate
 terraform -chdir=infra/main plan -out=tfplan
 terraform -chdir=infra/main apply tfplan
+docker build -t local/mi-app/backend:test ./backend
+docker build -t local/mi-app/frontend:test ./frontend
+ECR_REGISTRY=local APP_VERSION=test docker compose up -d
+curl http://localhost:3000/api/health
+curl -X POST http://localhost:3000/api/auth/login -d 'username=admin&password=admin123'
+docker compose down
 VERSION=20261102075633 ./scripts/deploy_local.sh
 ROLLBACK_TEST=1 VERSION=20261102075633 ./scripts/deploy_local.sh
 curl http://mi-app-alb-1240966694.us-east-1.elb.amazonaws.com/api/health
@@ -188,6 +203,7 @@ Resultados verificados:
 - CI: run `41470307384`, success.
 - CD: run `41470546562`, success, promoción a green.
 - Destroy: run `41471966668`, success; sin ALB, ASG, ECR, CloudWatch, SSM ni VPC. Permanecen el bucket de state y el rol OIDC.
+- App local: health 200, login JWT, suma 5.0, división por cero 400 y petición sin token 401.
 
 ## Correcciones aplicadas
 
