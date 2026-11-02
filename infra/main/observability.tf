@@ -72,19 +72,34 @@ resource "aws_cloudwatch_log_group" "app" {
 resource "aws_cloudwatch_metric_alarm" "alb_5xx_blue" {
   alarm_name          = "gh-alb-5xx-blue"
   alarm_description   = "Errores 5xx del Target Group azul"
-  namespace           = "AWS/ApplicationELB"
-  metric_name         = "HTTPCode_Target_5XX_Count"
-  statistic           = "Sum"
-  period              = 60
+  comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
   threshold           = 0
-  comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
 
-  dimensions = {
-    LoadBalancer = aws_lb.app.arn_suffix
-    TargetGroup  = aws_lb_target_group.blue.arn_suffix
+  metric_query {
+    id          = "m1"
+    return_data = false
+
+    metric {
+      namespace   = "AWS/ApplicationELB"
+      metric_name = "HTTPCode_Target_5XX_Count"
+      period      = 60
+      stat        = "Sum"
+
+      dimensions = {
+        LoadBalancer = aws_lb.app.arn_suffix
+        TargetGroup  = aws_lb_target_group.blue.arn_suffix
+      }
+    }
+  }
+
+  metric_query {
+    id          = "e1"
+    expression  = "FILL(m1, 0)"
+    label       = "5xx"
+    return_data = true
   }
 
   tags = {
@@ -97,19 +112,34 @@ resource "aws_cloudwatch_metric_alarm" "alb_5xx_blue" {
 resource "aws_cloudwatch_metric_alarm" "alb_5xx_green" {
   alarm_name          = "gh-alb-5xx-green"
   alarm_description   = "Errores 5xx del Target Group verde"
-  namespace           = "AWS/ApplicationELB"
-  metric_name         = "HTTPCode_Target_5XX_Count"
-  statistic           = "Sum"
-  period              = 60
+  comparison_operator = "GreaterThanThreshold"
   evaluation_periods  = 1
   datapoints_to_alarm = 1
   threshold           = 0
-  comparison_operator = "GreaterThanThreshold"
   treat_missing_data  = "notBreaching"
 
-  dimensions = {
-    LoadBalancer = aws_lb.app.arn_suffix
-    TargetGroup  = aws_lb_target_group.green.arn_suffix
+  metric_query {
+    id          = "m1"
+    return_data = false
+
+    metric {
+      namespace   = "AWS/ApplicationELB"
+      metric_name = "HTTPCode_Target_5XX_Count"
+      period      = 60
+      stat        = "Sum"
+
+      dimensions = {
+        LoadBalancer = aws_lb.app.arn_suffix
+        TargetGroup  = aws_lb_target_group.green.arn_suffix
+      }
+    }
+  }
+
+  metric_query {
+    id          = "e1"
+    expression  = "FILL(m1, 0)"
+    label       = "5xx"
+    return_data = true
   }
 
   tags = {

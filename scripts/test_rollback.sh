@@ -80,10 +80,24 @@ aws cloudwatch describe-alarms \
   --query 'MetricAlarms[].{Name:AlarmName,State:StateValue}' \
   --output table
 
-if [ "$ERROR_CODE" = "ALARM_ACTIVE" ]; then
-  echo "PASS: CodeDeploy se detuvo por ALARM_ACTIVE"
-  exit 0
+if [ "$ERROR_CODE" != "ALARM_ACTIVE" ]; then
+  echo "FAIL: el deployment no se detuvo por ALARM_ACTIVE (status=$FINAL_STATUS)" >&2
+  exit 1
 fi
 
-echo "FAIL: el deployment no se detuvo por ALARM_ACTIVE (status=$FINAL_STATUS)" >&2
+echo "PASS: CodeDeploy se detuvo por ALARM_ACTIVE"
+echo "Esperando a que las alarmas vuelvan a OK..."
+for _ in $(seq 1 60); do
+  ALARM_STATES="$(aws cloudwatch describe-alarms \
+    --alarm-names gh-alb-5xx-blue gh-alb-5xx-green \
+    --query 'MetricAlarms[].StateValue' --output text)"
+  echo "alarm states: $ALARM_STATES"
+  if ! printf '%s' "$ALARM_STATES" | grep -q 'ALARM'; then
+    echo "PASS: alarmas de vuelta en OK"
+    exit 0
+  fi
+  sleep 10
+done
+
+echo "FAIL: las alarmas no volvieron a OK" >&2
 exit 1

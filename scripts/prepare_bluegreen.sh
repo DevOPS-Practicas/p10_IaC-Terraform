@@ -8,6 +8,24 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 
+echo "Comprobando alarmas antes del despliegue..."
+ALARMS_OK=0
+for _ in $(seq 1 60); do
+  ALARM_STATES="$(aws cloudwatch describe-alarms \
+    --alarm-names gh-alb-5xx-blue gh-alb-5xx-green \
+    --query 'MetricAlarms[].StateValue' --output text)"
+  if ! printf '%s' "$ALARM_STATES" | grep -q 'ALARM'; then
+    ALARMS_OK=1
+    break
+  fi
+  echo "Alarmas activas: $ALARM_STATES; esperando..."
+  sleep 10
+done
+if [ "$ALARMS_OK" -ne 1 ]; then
+  echo "ERROR: hay alarmas en ALARM; no se crea el despliegue." >&2
+  exit 1
+fi
+
 ALB_ARN="$(terraform -chdir="$ROOT_DIR/infra/main" output -raw alb_arn)"
 BLUE_ARN="$(terraform -chdir="$ROOT_DIR/infra/main" output -raw blue_target_group_arn)"
 GREEN_ARN="$(terraform -chdir="$ROOT_DIR/infra/main" output -raw green_target_group_arn)"

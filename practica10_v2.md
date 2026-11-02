@@ -350,7 +350,7 @@ La infraestructura principal está en `infra/main`. Antes de aplicarla, revisa l
 | Tráfico de prueba | Listener 8080 actualizado por `prepare_bluegreen.sh` | Permite validar el entorno de reemplazo sin afectar producción. |
 | Rollback | `DEPLOYMENT_FAILURE` + `DEPLOYMENT_STOP_ON_ALARM` | Cubre fallos del script y alarmas. |
 | Promoción | `promote_bluegreen.sh` | Cambia el listener 80 al Target Group de reemplazo tras el deployment. |
-| Alarmas | Dos de 5xx, azul y verde | Protegen producción y el entorno de reemplazo. |
+| Alarmas | Dos de 5xx con `FILL(m1, 0)` | Protegen producción y el entorno de reemplazo; vuelven a OK cuando no hay 5xx. |
 | Listener 8080 | `allowed_test_cidr` | Se puede restringir a la IP del estudiante. |
 
 ### 7.3. Inicializar el main
@@ -414,7 +414,7 @@ aws elbv2 describe-load-balancers --names mi-app-alb \
   --query 'LoadBalancers[0].[LoadBalancerName,DNSName,State.Code]' --output table
 
 aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names mi-app-asg \
+  --auto-scaling-group-names mi-app-asg-blue \
   --query 'AutoScalingGroups[0].[AutoScalingGroupName,MinSize,MaxSize,DesiredCapacity]' --output table
 
 aws ecr describe-repositories \
@@ -490,12 +490,12 @@ Si se usa `type: directory` como cadena, CodeDeploy falla con `undefined method 
 |---|---|
 | `scripts/bootstrap_state.sh` | Crea el bucket de state y migra el state a S3. |
 | `scripts/init_backend.sh` | Inicializa el backend del main con el bucket correcto. |
-| `scripts/prepare_bluegreen.sh` | Detecta producción, apunta el listener 8080 al reemplazo y actualiza el Deployment Group. |
+| `scripts/prepare_bluegreen.sh` | Detecta producción, apunta el listener 8080 al reemplazo, actualiza el Deployment Group y comprueba que las alarmas estén en OK. |
 | `scripts/deploy_local.sh` | Build, push, bundle, subida a S3, deployment y promoción. |
 | `scripts/wait_and_continue.sh` | Espera `Ready`, valida 8080, continúa el deployment y promueve. |
 | `scripts/promote_bluegreen.sh` | Cambia el listener 80 al Target Group de reemplazo. |
 | `scripts/generate_5xx.sh` | Genera tráfico 5xx contra el listener de pruebas. |
-| `scripts/test_rollback.sh` | Espera `Ready`, genera 5xx y verifica `ALARM_ACTIVE`. |
+| `scripts/test_rollback.sh` | Espera `Ready`, genera 5xx, verifica `ALARM_ACTIVE` y espera a que las alarmas vuelvan a OK. |
 | `scripts/test_observabilidad.sh` | Verifica alarmas, dashboard, logs, SSM y health. |
 | `scripts/create_oidc_role.sh` | Crea o actualiza el rol OIDC. |
 
@@ -745,12 +745,13 @@ ROLLBACK_TEST=1 VERSION=<tag> ./scripts/deploy_local.sh
 
 El script:
 
-1. Prepara el Blue/Green.
+1. Prepara el Blue/Green y comprueba que las alarmas estén en OK.
 2. Crea el deployment y espera `Ready`.
 3. Genera 5xx contra el listener 8080.
 4. Espera a que CodeDeploy se detenga.
 5. Verifica que el error sea `ALARM_ACTIVE`.
-6. No promueve el entorno de reemplazo.
+6. Espera a que ambas alarmas vuelvan a `OK`.
+7. No promueve el entorno de reemplazo.
 
 Salida esperada:
 
@@ -760,9 +761,13 @@ Generando 5xx contra el listener de pruebas...
 status: Stopped
 error code: ALARM_ACTIVE
 PASS: CodeDeploy se detuvo por ALARM_ACTIVE
+alarm states: OK OK
+PASS: alarmas de vuelta en OK
 ```
 
 Producción debe seguir respondiendo 200 durante toda la prueba.
+
+`prepare_bluegreen.sh` también espera a que las alarmas estén en `OK` antes de crear un nuevo deployment. Así se evita que un rollback reciente bloquee el siguiente despliegue.
 
 ### 12.6. Comprobar la alarma azul
 
@@ -793,6 +798,8 @@ El script verifica:
 5. Parámetro SSM `/mi-app/cloudwatch-agent/config`.
 6. Health de producción y del listener de pruebas.
 
+Las alarmas de 5xx usan la expresión `FILL(m1, 0)`: si no hay tráfico 5xx, el valor evaluado es `0` y la alarma vuelve a `OK`. Esto evita que una alarma quede bloqueada en `ALARM` después de un rollback y que el siguiente despliegue se detenga al inicio.
+
 ### 13.2. Verificar métricas y logs
 
 ```bash
@@ -815,7 +822,7 @@ En la consola de CloudWatch:
 
 ```bash
 INSTANCE_ID="$(aws autoscaling describe-auto-scaling-groups \
-  --auto-scaling-group-names mi-app-asg \
+  --auto-scaling-group-names mi-app-asg-blue \
   --query 'AutoScalingGroups[0].Instances[0].InstanceId' --output text)"
 
 aws ssm send-command \
@@ -882,6 +889,7 @@ Los comandos deben devolver listas vacías o errores de “no encontrado”.
 | Cálculo | Login + `POST /api/calculadora/sumar` | `resultado: 5.0`. | Salida de curl |
 | Blue/Green | Despliegue normal | El entorno de reemplazo recibe tráfico y el anterior se conserva. | CodeDeploy |
 | Rollback | `generate_5xx.sh` + deploy | Alarma del TG de reemplazo en ALARM y deployment detenido. | CloudWatch y CodeDeploy |
+| Recuperación | Tras el rollback, esperar alarmas OK y desplegar de nuevo | Deployment `Succeeded` y producción sana. | CodeDeploy |
 | Alarmas | `test_observabilidad.sh` | Ambas alarmas registradas. | Salida del script |
 | Logs | Log group | Streams por instancia y eventos. | CloudWatch Logs |
 | Dashboard | Consola | Widgets con datos. | Captura |
@@ -922,6 +930,7 @@ Los comandos deben devolver listas vacías o errores de “no encontrado”.
 | 502 justo después de promover | Propagación del ALB | Esperar 20–30 s y repetir el health check. |
 | `HEALTH_CONSTRAINTS` | Instancias no sanas o agente no instalado | Revisar Target Group y logs de user_data. |
 | `ALARM_ACTIVE` | La alarma de 5xx se activó | Revisar logs, detener el tráfico 5xx y desplegar una versión sana. |
+| El deployment se detiene antes de `Ready` después de un rollback | La alarma sigue en `ALARM` | Esperar a que vuelva a `OK`; `prepare_bluegreen.sh` y `test_rollback.sh` ya esperan. |
 | El ASG de reemplazo queda huérfano | CodeDeploy no lo elimina tras un fallo | Eliminarlo manualmente antes del destroy. |
 | `terraform destroy` falla por el ASG de reemplazo | El ASG no está en el state | Eliminar el ASG de reemplazo primero. |
 | `ResourceInUse` al destruir el ALB | Quedan Target Groups o reglas | Destruir en orden: ASG, ALB, TG. |

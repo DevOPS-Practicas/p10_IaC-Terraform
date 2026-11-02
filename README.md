@@ -188,7 +188,10 @@ curl http://localhost:3000/api/health
 curl -X POST http://localhost:3000/api/auth/login -d 'username=admin&password=admin123'
 docker compose down
 gh run watch 41486345213 --repo LauraGabrielSantes/IaC-Terraform
-ROLLBACK_TEST=1 VERSION=d95ce56c179b4d0de766cb7ca694f185fe6858e0 ./scripts/deploy_local.sh
+gh workflow run cd-terraform-deploy.yml --repo LauraGabrielSantes/IaC-Terraform --ref main
+gh run watch 41491510694 --repo LauraGabrielSantes/IaC-Terraform
+ROLLBACK_TEST=1 VERSION=6eab8b8577d72d06bcdfae848d933d6a1b8c25d4 ./scripts/deploy_local.sh
+VERSION=6eab8b8577d72d06bcdfae848d933d6a1b8c25d4 ./scripts/deploy_local.sh
 ALB_DNS="$(terraform -chdir=infra/main output -raw alb_dns_name)"
 curl "http://$ALB_DNS/api/health"
 ```
@@ -207,7 +210,11 @@ Resultados verificados:
 - CI: run `41470307384`, success.
 - CD: run `41486345213`, success.
 - Destroy: run `41488398371`, success; sin ALB, ASG, ECR, CloudWatch, SSM ni VPC. Permanecen el bucket de state y el rol OIDC.
+- Levantamiento posterior: run `41491510694`, success; infraestructura y app en ejecución.
 - App local: health 200, login JWT, suma 5.0, división por cero 400, sin token 401 y `/api/boom` 500.
+- Rollback real: deployment `d-9M88W1NLM` detenido con `ALARM_ACTIVE`; alarma `gh-alb-5xx-blue` en `ALARM`; producción green siguió en 200.
+- Recuperación: `gh-alb-5xx-blue` volvió a `OK` con `FILL(m1, 0)`; deployment `d-DD7RO9NLM` terminó `Succeeded` y promovió a blue; health 200.
+- Estado actual: infraestructura levantada y sirviendo la app.
 
 ## Correcciones aplicadas
 
@@ -221,3 +228,5 @@ Resultados verificados:
 - Se ajustó `health_check_type = "EC2"` para evitar churn antes del primer despliegue.
 - Se documentó la alternancia azul/verde y la limpieza de ASG huérfanos.
 - Se actualizó la trust policy OIDC para aceptar los claims con IDs inmutables (`repo:owner@id/repo@id:...`) y el subject `environment:production` que usa el workflow de destroy.
+- Se usó `FILL(m1, 0)` en las alarmas de 5xx para que vuelvan a `OK` cuando no hay tráfico y no bloqueen el siguiente despliegue.
+- Se añadió una espera de alarmas en `test_rollback.sh` y en `prepare_bluegreen.sh` antes de desplegar.

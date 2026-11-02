@@ -56,7 +56,10 @@ El script:
 3. Genera 5xx contra el listener 8080.
 4. Espera a que CodeDeploy se detenga.
 5. Verifica `ALARM_ACTIVE` y que la alarma del reemplazo esté en `ALARM`.
-6. No promueve el reemplazo; producción sigue sana.
+6. Espera a que ambas alarmas vuelvan a `OK`.
+7. No promueve el reemplazo; producción sigue sana.
+
+Las alarmas usan `FILL(m1, 0)`, así que vuelven a `OK` cuando cesa el tráfico 5xx. No inicies otro despliegue mientras alguna alarma siga en `ALARM`: `prepare_bluegreen.sh` espera hasta 10 minutos y falla si no vuelven a `OK`.
 
 Revisión manual:
 
@@ -93,7 +96,7 @@ aws s3 ls "s3://iac-terraform-tfstate-<cuenta>-us-east-1"
 | Log group vacío | Ruta del archivo distinta o contenedor sin `tee` | Verificar `/var/log/calculadora/calculadora.log` y `docker inspect`. |
 | Deployment en `READY` y no avanza | Falta `continue-deployment` | Ejecutar `aws deploy continue-deployment --deployment-id <id> --deployment-wait-type READY_WAIT`. |
 | `HEALTH_CONSTRAINTS` | Instancias no sanas o agente no instalado | Revisar Target Group y logs de user_data. |
-| `ALARM_ACTIVE` | La alarma de 5xx se activó | Revisar logs y desplegar una versión sana. |
+| `ALARM_ACTIVE` | La alarma de 5xx se activó | Revisar logs, detener el 5xx y esperar a que la alarma vuelva a `OK` antes de desplegar. |
 | Queda un ASG `CodeDeploy_*` | Resto de una prueba anterior con `COPY_AUTO_SCALING_GROUP` | Eliminarlo manualmente antes del destroy. |
 | `terraform destroy` falla por un ASG no gestionado | Resto de una prueba anterior | Eliminar el ASG `CodeDeploy_*` primero. |
 
