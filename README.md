@@ -174,7 +174,7 @@ gh variable set AWS_REGION --repo LauraGabrielSantes/IaC-Terraform --body "us-ea
 gh pr create --repo LauraGabrielSantes/IaC-Terraform --base main --head prueba-ci --title "Prueba de CI Terraform"
 gh pr merge 1 --repo LauraGabrielSantes/IaC-Terraform --merge --delete-branch
 gh run watch 41470307384 --repo LauraGabrielSantes/IaC-Terraform
-gh run watch 41470546562 --repo LauraGabrielSantes/IaC-Terraform
+gh run watch 41486345213 --repo LauraGabrielSantes/IaC-Terraform
 gh workflow run destroy-terraform.yml --repo LauraGabrielSantes/IaC-Terraform --ref main -f confirm=DESTROY
 ./scripts/bootstrap_state.sh
 ./scripts/init_backend.sh
@@ -187,23 +187,27 @@ ECR_REGISTRY=local APP_VERSION=test docker compose up -d
 curl http://localhost:3000/api/health
 curl -X POST http://localhost:3000/api/auth/login -d 'username=admin&password=admin123'
 docker compose down
-VERSION=20261102075633 ./scripts/deploy_local.sh
-ROLLBACK_TEST=1 VERSION=20261102075633 ./scripts/deploy_local.sh
-curl http://mi-app-alb-1240966694.us-east-1.elb.amazonaws.com/api/health
+gh run watch 41486345213 --repo LauraGabrielSantes/IaC-Terraform
+ROLLBACK_TEST=1 VERSION=d95ce56c179b4d0de766cb7ca694f185fe6858e0 ./scripts/deploy_local.sh
+ALB_DNS="$(terraform -chdir=infra/main output -raw alb_dns_name)"
+curl "http://$ALB_DNS/api/health"
 ```
 
 Resultados verificados:
 
-- `terraform plan`: 47 recursos para crear, sin errores.
+- `terraform plan`: 48 recursos para crear, sin errores.
 - `terraform apply`: infraestructura creada.
-- Deployment normal: `Succeeded`, promoción a green y luego a blue.
-- Rollback: `ALARM_ACTIVE`, alarma `gh-alb-5xx-green` en `ALARM`, deployment detenido.
-- Health de producción: HTTP 200.
-- Cálculo: `{"result":5.0}`.
+- Deployment normal: `Succeeded`, promoción a green.
+- Rollback: `ALARM_ACTIVE`, alarma del Target Group de reemplazo en `ALARM`, deployment detenido.
+- Health de producción: HTTP 200, `{"status":"ok","version":"2.0.0"}`.
+- Frontend: HTTP 200, título `Calculadora`.
+- Login: token JWT con `admin/admin123`.
+- Cálculo: `{"operacion":"suma","a":2.0,"b":3.0,"resultado":5.0}`.
+- División por cero: 400. Sin token: 401. `/api/boom`: 500.
 - CI: run `41470307384`, success.
-- CD: run `41470546562`, success, promoción a green.
-- Destroy: run `41471966668`, success; sin ALB, ASG, ECR, CloudWatch, SSM ni VPC. Permanecen el bucket de state y el rol OIDC.
-- App local: health 200, login JWT, suma 5.0, división por cero 400 y petición sin token 401.
+- CD: run `41486345213`, success.
+- Destroy: run `41488398371`, success; sin ALB, ASG, ECR, CloudWatch, SSM ni VPC. Permanecen el bucket de state y el rol OIDC.
+- App local: health 200, login JWT, suma 5.0, división por cero 400, sin token 401 y `/api/boom` 500.
 
 ## Correcciones aplicadas
 
