@@ -1,5 +1,5 @@
 variable "aws_region" {
-  description = "Región de AWS."
+  description = "Región de AWS. Debe coincidir con AWS_REGION del repositorio."
   type        = string
   default     = "us-east-1"
 }
