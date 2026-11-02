@@ -162,6 +162,11 @@ gh repo create LauraGabrielSantes/IaC-Terraform --public --description "Practica
 ./scripts/create_oidc_role.sh
 gh variable set AWS_ROLE_ARN --repo LauraGabrielSantes/IaC-Terraform --body "arn:aws:iam::684707794609:role/IaC-Terraform-GitHubActions"
 gh variable set AWS_REGION --repo LauraGabrielSantes/IaC-Terraform --body "us-east-1"
+gh pr create --repo LauraGabrielSantes/IaC-Terraform --base main --head prueba-ci --title "Prueba de CI Terraform"
+gh pr merge 1 --repo LauraGabrielSantes/IaC-Terraform --merge --delete-branch
+gh run watch 41470307384 --repo LauraGabrielSantes/IaC-Terraform
+gh run watch 41470546562 --repo LauraGabrielSantes/IaC-Terraform
+gh workflow run destroy-terraform.yml --repo LauraGabrielSantes/IaC-Terraform --ref main -f confirm=DESTROY
 ./scripts/bootstrap_state.sh
 ./scripts/init_backend.sh
 terraform -chdir=infra/main validate
@@ -180,6 +185,9 @@ Resultados verificados:
 - Rollback: `ALARM_ACTIVE`, alarma `gh-alb-5xx-green` en `ALARM`, deployment detenido.
 - Health de producción: HTTP 200.
 - Cálculo: `{"result":5.0}`.
+- CI: run `41470307384`, success.
+- CD: run `41470546562`, success, promoción a green.
+- Destroy: run `41471966668`, success; sin ALB, ASG, ECR, CloudWatch, SSM ni VPC. Permanecen el bucket de state y el rol OIDC.
 
 ## Correcciones aplicadas
 
@@ -192,3 +200,4 @@ Resultados verificados:
 - Se añadieron permisos de ejecución a todos los scripts.
 - Se ajustó `health_check_type = "EC2"` para evitar churn antes del primer despliegue.
 - Se documentó la alternancia azul/verde y la limpieza de ASG huérfanos.
+- Se actualizó la trust policy OIDC para aceptar los claims con IDs inmutables (`repo:owner@id/repo@id:...`) y el subject `environment:production` que usa el workflow de destroy.

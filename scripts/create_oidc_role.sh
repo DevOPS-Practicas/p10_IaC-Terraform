@@ -42,8 +42,10 @@ cat > "$TRUST_POLICY" <<JSON
           "token.actions.githubusercontent.com:sub": [
             "repo:${GITHUB_REPO}:ref:refs/heads/main",
             "repo:${GITHUB_REPO}:pull_request",
+            "repo:${GITHUB_REPO}:environment:production",
             "repo:${GITHUB_OWNER}@*/${GITHUB_REPO_NAME}@*:ref:refs/heads/main",
-            "repo:${GITHUB_OWNER}@*/${GITHUB_REPO_NAME}@*:pull_request"
+            "repo:${GITHUB_OWNER}@*/${GITHUB_REPO_NAME}@*:pull_request",
+            "repo:${GITHUB_OWNER}@*/${GITHUB_REPO_NAME}@*:environment:production"
           ]
         }
       }

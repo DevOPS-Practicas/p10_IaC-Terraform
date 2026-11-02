@@ -204,7 +204,11 @@ El script:
         "StringLike": {
           "token.actions.githubusercontent.com:sub": [
             "repo:LauraGabrielSantes/IaC-Terraform:ref:refs/heads/main",
-            "repo:LauraGabrielSantes/IaC-Terraform:pull_request"
+            "repo:LauraGabrielSantes/IaC-Terraform:pull_request",
+            "repo:LauraGabrielSantes/IaC-Terraform:environment:production",
+            "repo:LauraGabrielSantes@*/IaC-Terraform@*:ref:refs/heads/main",
+            "repo:LauraGabrielSantes@*/IaC-Terraform@*:pull_request",
+            "repo:LauraGabrielSantes@*/IaC-Terraform@*:environment:production"
           ]
         }
       }
@@ -256,6 +260,14 @@ aws iam get-role \
 ```
 
 Debe incluir el repositorio correcto y el `aud` de `sts.amazonaws.com`.
+
+GitHub puede emitir el claim `sub` con IDs inmutables, por ejemplo:
+
+```text
+repo:LauraGabrielSantes@75498044/IaC-Terraform@1443006330:pull_request
+```
+
+La trust policy de `scripts/create_oidc_role.sh` acepta tanto el formato corto como el de IDs. El workflow de destroy usa `environment: production`, por lo que también debe incluir el subject `...:environment:production`.
 
 ---
 
@@ -804,7 +816,7 @@ aws autoscaling describe-auto-scaling-groups \
 terraform -chdir=infra/main destroy -auto-approve
 ```
 
-El workflow `Destroy Terraform` hace lo mismo, pero requiere confirmación y el environment `production`.
+El workflow `Destroy Terraform` hace lo mismo, pero requiere confirmación y el environment `production`. Por eso el rol OIDC debe confiar en el subject `...:environment:production`.
 
 ### 14.2. Verificar que el bootstrap sigue existiendo
 
@@ -872,7 +884,7 @@ Los comandos deben devolver listas vacías o errores de “no encontrado”.
 
 | Síntoma | Causa probable | Solución |
 |---|---|---|
-| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | Trust policy o repo incorrectos | Revisar el `sub` del rol y el nombre del repositorio. |
+| `Not authorized to perform sts:AssumeRoleWithWebIdentity` | La trust policy no coincide con el `sub` real | Revisar el `sub` (puede incluir IDs inmutables) y añadir el subject `environment:production` si el job usa environment. |
 | `Bucket does not exist` en `terraform init` | Bootstrap no aplicado | Ejecutar `infra/bootstrap` y migrar el state. |
 | `Error: creating EC2 ... UnauthorizedOperation` | El rol OIDC no tiene permisos | Revisar las políticas adjuntas al rol. |
 | El agente no publica métricas | Falta `CloudWatchAgentServerPolicy` o el parámetro SSM | Revisar IAM y `systemctl status amazon-cloudwatch-agent`. |
