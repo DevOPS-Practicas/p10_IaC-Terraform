@@ -1,3 +1,4 @@
+# Valores por defecto pensados para seguir la practica sin archivo tfvars.
 variable "aws_region" {
   description = "Región de AWS. Debe coincidir con AWS_REGION del repositorio."
   type        = string
