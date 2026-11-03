@@ -57,7 +57,7 @@ GitHub Actions --OIDC--> IAM Role
 ### 1. Crear el rol OIDC
 
 ```bash
-./scripts/create_oidc_role.sh
+GITHUB_REPO="<TU_USUARIO>/IaC-Terraform" ./scripts/create_oidc_role.sh
 ```
 
 El script crea o actualiza `IaC-Terraform-GitHubActions` y muestra su ARN. No guarda secretos.
@@ -65,9 +65,9 @@ El script crea o actualiza `IaC-Terraform-GitHubActions` y muestra su ARN. No gu
 ### 2. Configurar variables del repositorio
 
 ```bash
-gh variable set AWS_ROLE_ARN --repo LauraGabrielSantes/IaC-Terraform \
-  --body "arn:aws:iam::<CUENTA>:role/IaC-Terraform-GitHubActions"
-gh variable set AWS_REGION --repo LauraGabrielSantes/IaC-Terraform --body "us-east-1"
+gh variable set AWS_ROLE_ARN --repo <TU_USUARIO>/IaC-Terraform \
+  --body "arn:aws:iam::<TU_CUENTA>:role/IaC-Terraform-GitHubActions"
+gh variable set AWS_REGION --repo <TU_USUARIO>/IaC-Terraform --body "us-east-1"
 ```
 
 Deben ser **variables**, no secrets. El workflow las consume con `${{ vars.AWS_ROLE_ARN }}` y `${{ vars.AWS_REGION }}`.
@@ -82,17 +82,16 @@ chmod +x scripts/bootstrap_state.sh
 ### 4. Inicializar la infraestructura principal
 
 ```bash
-cd ../main
-terraform init -backend-config="bucket=$BUCKET"
-terraform validate
-terraform plan -out=tfplan
-terraform apply tfplan
+BUCKET="iac-terraform-tfstate-$(aws sts get-caller-identity --query Account --output text)-us-east-1"
+terraform -chdir=infra/main init -backend-config="bucket=$BUCKET"
+terraform -chdir=infra/main validate
+terraform -chdir=infra/main plan -out=tfplan
+terraform -chdir=infra/main apply tfplan
 ```
 
 ### 5. Desplegar la aplicación
 
 ```bash
-cd ../..
 ./scripts/deploy_local.sh
 ```
 
@@ -161,72 +160,3 @@ O ejecutar el workflow `Destroy Terraform` con la confirmación `DESTROY`.
 - SSH deshabilitado; usar SSM Session Manager.
 - Listener 8080 restringido por `allowed_test_cidr`.
 - El rol OIDC usa políticas administradas amplias para el laboratorio. En producción, sustituirlas por una política acotada.
-
-## Registro de ejecución
-
-Comandos ejecutados durante la validación, sin credenciales ni secretos:
-
-```text
-gh repo create LauraGabrielSantes/IaC-Terraform --public --description "Practica 10 - Infraestructura como codigo con Terraform"
-./scripts/create_oidc_role.sh
-gh variable set AWS_ROLE_ARN --repo LauraGabrielSantes/IaC-Terraform --body "arn:aws:iam::684707794609:role/IaC-Terraform-GitHubActions"
-gh variable set AWS_REGION --repo LauraGabrielSantes/IaC-Terraform --body "us-east-1"
-gh pr create --repo LauraGabrielSantes/IaC-Terraform --base main --head prueba-ci --title "Prueba de CI Terraform"
-gh pr merge 1 --repo LauraGabrielSantes/IaC-Terraform --merge --delete-branch
-gh run watch 41470307384 --repo LauraGabrielSantes/IaC-Terraform
-gh run watch 41486345213 --repo LauraGabrielSantes/IaC-Terraform
-gh workflow run destroy-terraform.yml --repo LauraGabrielSantes/IaC-Terraform --ref main -f confirm=DESTROY
-./scripts/bootstrap_state.sh
-./scripts/init_backend.sh
-terraform -chdir=infra/main validate
-terraform -chdir=infra/main plan -out=tfplan
-terraform -chdir=infra/main apply tfplan
-docker build -t local/mi-app/backend:test ./backend
-docker build -t local/mi-app/frontend:test ./frontend
-ECR_REGISTRY=local APP_VERSION=test docker compose up -d
-curl http://localhost:3000/api/health
-curl -X POST http://localhost:3000/api/auth/login -d 'username=admin&password=admin123'
-docker compose down
-gh run watch 41486345213 --repo LauraGabrielSantes/IaC-Terraform
-gh workflow run cd-terraform-deploy.yml --repo LauraGabrielSantes/IaC-Terraform --ref main
-gh run watch 41491510694 --repo LauraGabrielSantes/IaC-Terraform
-ROLLBACK_TEST=1 VERSION=6eab8b8577d72d06bcdfae848d933d6a1b8c25d4 ./scripts/deploy_local.sh
-VERSION=6eab8b8577d72d06bcdfae848d933d6a1b8c25d4 ./scripts/deploy_local.sh
-ALB_DNS="$(terraform -chdir=infra/main output -raw alb_dns_name)"
-curl "http://$ALB_DNS/api/health"
-```
-
-Resultados verificados:
-
-- `terraform plan`: 48 recursos para crear, sin errores.
-- `terraform apply`: infraestructura creada.
-- Deployment normal: `Succeeded`, promoción a green.
-- Rollback: `ALARM_ACTIVE`, alarma del Target Group de reemplazo en `ALARM`, deployment detenido.
-- Health de producción: HTTP 200, `{"status":"ok","version":"2.0.0"}`.
-- Frontend: HTTP 200, título `Calculadora`.
-- Login: token JWT con `admin/admin123`.
-- Cálculo: `{"operacion":"suma","a":2.0,"b":3.0,"resultado":5.0}`.
-- División por cero: 400. Sin token: 401. `/api/boom`: 500.
-- CI: run `41470307384`, success.
-- CD: run `41486345213`, success.
-- Destroy: run `41488398371`, success; sin ALB, ASG, ECR, CloudWatch, SSM ni VPC. Permanecen el bucket de state y el rol OIDC.
-- Levantamiento posterior: run `41491510694`, success; infraestructura y app en ejecución.
-- App local: health 200, login JWT, suma 5.0, división por cero 400, sin token 401 y `/api/boom` 500.
-- Rollback real: deployment `d-9M88W1NLM` detenido con `ALARM_ACTIVE`; alarma `gh-alb-5xx-blue` en `ALARM`; producción green siguió en 200.
-- Recuperación: `gh-alb-5xx-blue` volvió a `OK` con `FILL(m1, 0)`; deployment `d-DD7RO9NLM` terminó `Succeeded` y promovió a blue; health 200.
-- Estado actual: infraestructura levantada y sirviendo la app.
-
-## Correcciones aplicadas
-
-- Se reemplazó `target_group_pair_info` por `target_group_info`: la API de CodeDeploy para EC2/On-Premises no acepta el par de Target Groups de ECS.
-- Se reemplazó `COPY_AUTO_SCALING_GROUP` por `DISCOVER_EXISTING` con dos ASG gestionados por Terraform.
-- Se añadió `promote_bluegreen.sh` para cambiar el listener 80 después del deployment.
-- Se corrigió `appspec.yml`: `permissions.type` debe ser una lista (`- file`).
-- Se corrigió `wait_and_continue.sh` para comparar `Ready`/`Succeeded` sin depender de mayúsculas.
-- Se añadió `bootstrap_state.sh` para crear el bucket de state y migrar el state.
-- Se añadieron permisos de ejecución a todos los scripts.
-- Se ajustó `health_check_type = "EC2"` para evitar churn antes del primer despliegue.
-- Se documentó la alternancia azul/verde y la limpieza de ASG huérfanos.
-- Se actualizó la trust policy OIDC para aceptar los claims con IDs inmutables (`repo:owner@id/repo@id:...`) y el subject `environment:production` que usa el workflow de destroy.
-- Se usó `FILL(m1, 0)` en las alarmas de 5xx para que vuelvan a `OK` cuando no hay tráfico y no bloqueen el siguiente despliegue.
-- Se añadió una espera de alarmas en `test_rollback.sh` y en `prepare_bluegreen.sh` antes de desplegar.
