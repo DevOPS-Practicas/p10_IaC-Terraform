@@ -46,6 +46,8 @@ GitHub Actions --OIDC--> IAM Role
 
 ## Prerrequisitos
 
+Tiempo estimado: entre 60 y 90 minutos, incluyendo dos despliegues Blue/Green y la prueba de rollback.
+
 - AWS CLI v2 autenticado con permisos de IAM, EC2, VPC, ECR, S3, ELB, Auto Scaling, CodeDeploy, CloudWatch y SSM.
 - Terraform 1.10 o superior.
 - GitHub CLI autenticado.
