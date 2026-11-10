@@ -101,7 +101,7 @@ aws iam create-open-id-connect-provider \
 ### 3.3. Repositorio
 
 ```bash
-git clone https://github.com/LauraGabrielSantes/IaC-Terraform.git
+git clone https://github.com/DevOPS-Practicas/IaC-Terraform.git
 cd IaC-Terraform
 ```
 
@@ -215,12 +215,12 @@ El script:
         },
         "StringLike": {
           "token.actions.githubusercontent.com:sub": [
-            "repo:LauraGabrielSantes/IaC-Terraform:ref:refs/heads/main",
-            "repo:LauraGabrielSantes/IaC-Terraform:pull_request",
-            "repo:LauraGabrielSantes/IaC-Terraform:environment:production",
-            "repo:LauraGabrielSantes@*/IaC-Terraform@*:ref:refs/heads/main",
-            "repo:LauraGabrielSantes@*/IaC-Terraform@*:pull_request",
-            "repo:LauraGabrielSantes@*/IaC-Terraform@*:environment:production"
+            "repo:DevOPS-Practicas/IaC-Terraform:ref:refs/heads/main",
+            "repo:DevOPS-Practicas/IaC-Terraform:pull_request",
+            "repo:DevOPS-Practicas/IaC-Terraform:environment:production",
+            "repo:DevOPS-Practicas@*/IaC-Terraform@*:ref:refs/heads/main",
+            "repo:DevOPS-Practicas@*/IaC-Terraform@*:pull_request",
+            "repo:DevOPS-Practicas@*/IaC-Terraform@*:environment:production"
           ]
         }
       }
@@ -246,18 +246,18 @@ ROLE_ARN="$(aws iam get-role \
   --query 'Role.Arn' --output text)"
 
 gh variable set AWS_ROLE_ARN \
-  --repo LauraGabrielSantes/IaC-Terraform \
+  --repo DevOPS-Practicas/IaC-Terraform \
   --body "$ROLE_ARN"
 
 gh variable set AWS_REGION \
-  --repo LauraGabrielSantes/IaC-Terraform \
+  --repo DevOPS-Practicas/IaC-Terraform \
   --body "us-east-1"
 ```
 
 Verificación:
 
 ```bash
-gh variable list --repo LauraGabrielSantes/IaC-Terraform
+gh variable list --repo DevOPS-Practicas/IaC-Terraform
 ```
 
 Deben aparecer `AWS_ROLE_ARN` y `AWS_REGION`. Son **variables**, no secrets: no hay access keys en el repositorio.
@@ -276,7 +276,7 @@ Debe incluir el repositorio correcto y el `aud` de `sts.amazonaws.com`.
 GitHub puede emitir el claim `sub` con IDs inmutables, por ejemplo:
 
 ```text
-repo:LauraGabrielSantes@75498044/IaC-Terraform@1443006330:pull_request
+repo:DevOPS-Practicas@<ORG_ID>/IaC-Terraform@<REPO_ID>:pull_request
 ```
 
 La trust policy de `scripts/create_oidc_role.sh` acepta tanto el formato corto como el de IDs. El workflow de destroy usa `environment: production`, por lo que también debe incluir el subject `...:environment:production`.
@@ -617,7 +617,7 @@ git commit -m "docs: prueba de CI"
 git push -u origin prueba-ci
 
 gh pr create \
-  --repo LauraGabrielSantes/IaC-Terraform \
+  --repo DevOPS-Practicas/IaC-Terraform \
   --base main \
   --head prueba-ci \
   --title "Prueba de CI Terraform" \
@@ -627,8 +627,8 @@ gh pr create \
 Observar el workflow:
 
 ```bash
-gh run list --repo LauraGabrielSantes/IaC-Terraform --limit 5
-gh run watch --repo LauraGabrielSantes/IaC-Terraform
+gh run list --repo DevOPS-Practicas/IaC-Terraform --limit 5
+gh run watch --repo DevOPS-Practicas/IaC-Terraform
 ```
 
 El workflow `CI Terraform` debe terminar en verde y publicar el resumen del plan.
@@ -636,7 +636,7 @@ El workflow `CI Terraform` debe terminar en verde y publicar el resumen del plan
 ### 11.2. Merge a main
 
 ```bash
-gh pr merge --repo LauraGabrielSantes/IaC-Terraform --merge --delete-branch
+gh pr merge --repo DevOPS-Practicas/IaC-Terraform --merge --delete-branch
 ```
 
 El merge dispara `CD Terraform Deploy`. El workflow aplica Terraform, publica imágenes, crea el bundle y despliega.
@@ -644,7 +644,7 @@ El merge dispara `CD Terraform Deploy`. El workflow aplica Terraform, publica im
 Verificación:
 
 ```bash
-gh run list --repo LauraGabrielSantes/IaC-Terraform --limit 5
+gh run list --repo DevOPS-Practicas/IaC-Terraform --limit 5
 ```
 
 El workflow `CD Terraform Deploy` debe terminar en verde.
